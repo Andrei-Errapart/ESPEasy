@@ -15,7 +15,7 @@
 
 # define PLUGIN_027
 # define PLUGIN_ID_027         27
-# define PLUGIN_NAME_027       "Energy (DC) - INA219"
+# define PLUGIN_NAME_027       "Energy (DC) - INA232"
 # define PLUGIN_VALUENAME1_027 "Voltage"
 # define PLUGIN_VALUENAME2_027 "Current"
 # define PLUGIN_VALUENAME3_027 "Power"
@@ -62,28 +62,8 @@ boolean Plugin_027(uint8_t function, struct EventStruct *event, String& string)
     case PLUGIN_I2C_HAS_ADDRESS:
     case PLUGIN_WEBFORM_SHOW_I2C_PARAMS:
     {
-      // Many boards, like Adafruit INA219: https://learn.adafruit.com/adafruit-ina219-current-sensor-breakout/assembly
-      // A0 and A1 are default connected to GND with 10k pull-down resistor.
-      // To select another address, bridge either A0 and/or A1 to set to VS+, SDA or SCL signale.
-      //  (0x40) 1000000 (A0=GND, A1=GND)
-      //  (0x41) 1000001 (A0=VS+, A1=GND)
-      //  (0x44) 1000100 (A0=GND, A1=VS+)
-      //  (0x45) 1000101 (A0=VS+, A1=VS+)
-      //  (0x42) 1000010 (A0=SDA, A1=GND)
-      //  (0x43) 1000011 (A0=SCL, A1=GND)
-      //  (0x46) 1000110 (A0=SDA, A1=VS+)
-      //  (0x47) 1000111 (A0=SCL, A1=VS+)
-      //  (0x48) 1001000 (A0=GND, A1=SDA)
-      //  (0x49) 1001001 (A0=VS+, A1=SDA)
-      //  (0x4A) 1001010 (A0=SDA, A1=SDA)
-      //  (0x4B) 1001011 (A0=SCL, A1=SDA)
-      //  (0x4C) 1001100 (A0=GND, A1=SCL)
-      //  (0x4D) 1001101 (A0=VS+, A1=SCL)
-      //  (0x4E) 1001110 (A0=SDA, A1=SCL)
-      //  (0x4F) 1001111 (A0=SCL, A1=SCL)
-
-      const uint8_t i2cAddressValues[] = { 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47,
-                                           0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F };
+      // INA232A
+      const uint8_t i2cAddressValues[] = { 0x40, 0x41, 0x42, 0x43};
 
       if (function == PLUGIN_WEBFORM_SHOW_I2C_PARAMS) {
         addFormSelectorI2C(F("i2c_addr"), 16, i2cAddressValues, P027_I2C_ADDR);
@@ -191,7 +171,7 @@ boolean Plugin_027(uint8_t function, struct EventStruct *event, String& string)
       if (nullptr != P027_data) {
         float voltage = P027_data->getBusVoltage_V() + (P027_data->getShuntVoltage_mV() / 1000);
         float current = P027_data->getCurrent_mA() / 1000;
-        float power   = voltage * current;
+        float power   = P027_data->getPower_W();
 
         UserVar[event->BaseVarIndex]     = voltage;
         UserVar[event->BaseVarIndex + 1] = current;

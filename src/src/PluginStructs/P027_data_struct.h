@@ -47,6 +47,9 @@ private:
   // **************************************************************************/
   int16_t getCurrent_raw();
 
+  // TODO: doc
+  int16_t getPower_raw();
+
 public:
 
   // **************************************************************************/
@@ -64,6 +67,9 @@ public:
   //            config settings and current LSB
   // **************************************************************************/
   float getCurrent_mA();
+
+  // TODO: doc
+  float getPower_W();
 
 private:
 
