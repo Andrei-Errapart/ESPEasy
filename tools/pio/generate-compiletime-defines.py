@@ -104,7 +104,7 @@ def gen_compiletime_defines(node):
 
     return env.Object(
         node,
-        CPPDEFINES=env["CPPDEFINES"]
+        CPPDEFINES=list(env["CPPDEFINES"])
         + [("SET_BUILD_BINARY_FILENAME", '\\"%s\\"' % create_binary_filename())]
         + [("SET_BOARD_NAME", '\\"%s\\"' % get_board_name())]
         + [("SET_BUILD_PLATFORM", '\\"%s\\"' % platform.platform())]
