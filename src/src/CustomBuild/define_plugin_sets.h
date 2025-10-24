@@ -1324,6 +1324,7 @@ To create/register a plugin, you have to :
     #define USES_P025   // ADS1115
     #define USES_P026   // SysInfo
     #define USES_P027   // INA219
+    #define USES_P152   // INA232
     #define USES_P028   // BME280
     #define USES_P029   // Output
 
@@ -1596,6 +1597,9 @@ To create/register a plugin, you have to :
   #endif
    #ifndef USES_P148
      #define USES_P148   // Sonoff POWR3xxD and THR3xxD display
+   #endif
+   #ifndef USES_P152
+     #define USES_P152   // INA232
    #endif
 
 #endif
@@ -2149,6 +2153,9 @@ To create/register a plugin, you have to :
   #endif
   #ifndef USES_P151
     #define USES_P151   // Environment - I2C Honeywell Pressure
+  #endif
+  #ifndef USES_P152
+    #define USES_P152   // INA232
   #endif
 
   // Controllers
