@@ -118,12 +118,8 @@ boolean Plugin_152(uint8_t function, struct EventStruct *event, String& string)
         static_cast<P152_data_struct *>(getPluginTaskData(event->TaskIndex));
 
       if (nullptr != P152_data) {
-        // Check if device is connected
-        if (!P152_data->isConnected()) {
-          addLog(LOG_LEVEL_ERROR, F("INA232: Device not found on I2C bus"));
-          success = false;
-          break;
-        }
+        // Don't check connection here as it will be done by the framework
+        // The I2C device check happens automatically for I2C devices
         
         const bool mustLog = loglevelActiveFor(LOG_LEVEL_INFO);
         String     log;
@@ -182,16 +178,8 @@ boolean Plugin_152(uint8_t function, struct EventStruct *event, String& string)
         static_cast<P152_data_struct *>(getPluginTaskData(event->TaskIndex));
 
       if (nullptr != P152_data) {
-        // Check if device is still connected before reading
-        if (!P152_data->isConnected()) {
-          addLog(LOG_LEVEL_ERROR, F("INA232: Device not responding, attempting recovery"));
-          P152_data->tryRecoverDevice();
-          // Try one more time after recovery
-          if (!P152_data->isConnected()) {
-            success = false;
-            break;
-          }
-        }
+        // The framework handles I2C device checking for us
+        // Just read the values
         
         float voltage = P152_data->getBusVoltage_V();
         float current = P152_data->getCurrent_mA() / 1000;
