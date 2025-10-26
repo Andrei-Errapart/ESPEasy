@@ -118,6 +118,13 @@ boolean Plugin_152(uint8_t function, struct EventStruct *event, String& string)
         static_cast<P152_data_struct *>(getPluginTaskData(event->TaskIndex));
 
       if (nullptr != P152_data) {
+        // Check if device is connected
+        if (!P152_data->isConnected()) {
+          addLog(LOG_LEVEL_ERROR, F("INA232: Device not found on I2C bus"));
+          success = false;
+          break;
+        }
+        
         const bool mustLog = loglevelActiveFor(LOG_LEVEL_INFO);
         String     log;
 
@@ -175,9 +182,35 @@ boolean Plugin_152(uint8_t function, struct EventStruct *event, String& string)
         static_cast<P152_data_struct *>(getPluginTaskData(event->TaskIndex));
 
       if (nullptr != P152_data) {
-        float voltage = P152_data->getBusVoltage_V() + (P152_data->getShuntVoltage_mV() / 1000);
+        // Check if device is still connected before reading
+        if (!P152_data->isConnected()) {
+          addLog(LOG_LEVEL_ERROR, F("INA232: Device not responding, attempting recovery"));
+          P152_data->tryRecoverDevice();
+          // Try one more time after recovery
+          if (!P152_data->isConnected()) {
+            success = false;
+            break;
+          }
+        }
+        
+        float voltage = P152_data->getBusVoltage_V();
         float current = P152_data->getCurrent_mA() / 1000;
         float power   = P152_data->getPower_mW() / 1000;
+        
+        // Add debug logging to check raw values
+        if (loglevelActiveFor(LOG_LEVEL_DEBUG)) {
+          P152_data->debugReadAllRegisters();
+          String log = F("INA232 Raw values - Voltage: ");
+          log += String(voltage, 3);
+          log += F("V, Current: ");
+          log += String(current, 3);
+          log += F("A, Power: ");
+          log += String(power, 3);
+          log += F("W, Calculated Power: ");
+          log += String(voltage * current, 6);
+          log += F("W");
+          addLogMove(LOG_LEVEL_DEBUG, log);
+        }
 
         UserVar[event->BaseVarIndex]     = voltage;
         UserVar[event->BaseVarIndex + 1] = current;
@@ -200,7 +233,10 @@ boolean Plugin_152(uint8_t function, struct EventStruct *event, String& string)
 
             if (mustLog) {
               log += F(": Voltage: ");
-              log += voltage;
+              log += String(voltage, 3);
+              log += F("V (");
+              log += String(voltage * 1000, 1);
+              log += F("mV)");
             }
             break;
           }
@@ -210,8 +246,11 @@ boolean Plugin_152(uint8_t function, struct EventStruct *event, String& string)
             UserVar[event->BaseVarIndex] = current;
 
             if (mustLog) {
-              log += F(" Current: ");
-              log += current;
+              log += F(": Current: ");
+              log += String(current, 3);
+              log += F("A (");
+              log += String(current * 1000, 1);
+              log += F("mA)");
             }
             break;
           }
@@ -221,8 +260,11 @@ boolean Plugin_152(uint8_t function, struct EventStruct *event, String& string)
             UserVar[event->BaseVarIndex] = power;
 
             if (mustLog) {
-              log += F(" Power: ");
-              log += power;
+              log += F(": Power: ");
+              log += String(power, 3);
+              log += F("W (");
+              log += String(power * 1000, 1);
+              log += F("mW)");
             }
             break;
           }
@@ -235,11 +277,16 @@ boolean Plugin_152(uint8_t function, struct EventStruct *event, String& string)
 
             if (mustLog) {
               log += F(": Voltage: ");
-              log += voltage;
-              log += F(" Current: ");
-              log += current;
-              log += F(" Power: ");
-              log += power;
+              log += String(voltage, 3);
+              log += F("V (");
+              log += String(voltage * 1000, 1);
+              log += F("mV) Current: ");
+              log += String(current, 3);
+              log += F("A (");
+              log += String(current * 1000, 1);
+              log += F("mA) Power: ");
+              log += String(power, 3);
+              log += F("W");
             }
             break;
           }

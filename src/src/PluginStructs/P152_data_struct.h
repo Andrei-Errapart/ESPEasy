@@ -79,6 +79,21 @@ public:
   // **************************************************************************/
   float getPower_mW();
 
+  // **************************************************************************/
+  // Debug function to read raw register values
+  // **************************************************************************/
+  void debugReadAllRegisters();
+
+  // **************************************************************************/
+  // Check if device is present on I2C bus
+  // **************************************************************************/
+  bool isConnected();
+
+  // **************************************************************************/
+  // Attempt to recover device after communication errors
+  // **************************************************************************/
+  void tryRecoverDevice();
+
 private:
 
   // **************************************************************************/
@@ -109,6 +124,10 @@ private:
   float shuntVoltageLSB_uV = 0;
 
   uint8_t i2caddr;
+  
+  // Error tracking for recovery
+  uint8_t errorCount = 0;
+  unsigned long lastSuccessTime = 0;
 };
 #endif // ifdef USES_P152
 #endif // ifndef PLUGINSTRUCTS_P152_DATA_STRUCT_H

@@ -2,6 +2,9 @@
 
 #ifdef USES_P152
 
+#include "../Helpers/I2C_access.h"
+#include "../Globals/I2Cdev.h"
+
 
 // INA232 Register Addresses
 # define INA232_REG_CONFIG                      (0x00)
@@ -63,7 +66,36 @@
 # define INA232_CONFIG_MODE_SHUNT_BUS_CONT      (0x0007) // Shunt and bus, continuous
 
 
-P152_data_struct::P152_data_struct(uint8_t i2c_addr) : i2caddr(i2c_addr) {}
+P152_data_struct::P152_data_struct(uint8_t i2c_addr) : i2caddr(i2c_addr) {
+  // Initialize with default values
+  errorCount = 0;
+  lastSuccessTime = millis();
+  
+  // Try to wake up the device first
+  I2C_wakeup(i2caddr);
+  delay(10); // Give device time to wake up
+  
+  // Verify device is present by reading manufacturer ID (should be 0x5449 for TI)
+  uint16_t mfr_id = 0;
+  wireReadRegister(INA232_REG_MANUFACTURER_ID, &mfr_id);
+  
+  if (loglevelActiveFor(LOG_LEVEL_INFO)) {
+    String log = formatToHex(i2caddr, F("INA232 0x"), 2);
+    log += F(" Manufacturer ID: 0x");
+    log += String(mfr_id, HEX);
+    if (mfr_id != 0x5449) {
+      log += F(" (Expected 0x5449 - Device not responding correctly)");
+    }
+    addLogMove(LOG_LEVEL_INFO, log);
+  }
+  
+  // Only reset if we got a valid manufacturer ID
+  if (mfr_id == 0x5449) {
+    // Reset the device to ensure clean state
+    wireWriteRegister(INA232_REG_CONFIG, INA232_CONFIG_RESET);
+    delay(10); // Wait for reset to complete
+  }
+}
 
 void P152_data_struct::setCalibration_48V_5A() {
   // For 5A max current with 0.01 ohm shunt resistor
@@ -76,7 +108,7 @@ void P152_data_struct::setCalibration_48V_5A() {
 
   currentLSB_mA = 0.2f;  // 200 µA = 0.2 mA
   shuntVoltageLSB_uV = 2.5f;  // 2.5 µV for ±81.92mV range
-  powerLSB_mW = 3.2f * currentLSB_mA;  // Power LSB = 3.2 * Current LSB
+  powerLSB_mW = 32.0f * currentLSB_mA;  // Power LSB = 32 * Current LSB per datasheet
 
   calValue = 2560;
 
@@ -101,13 +133,14 @@ void P152_data_struct::setCalibration_48V_2A() {
   // Current LSB = 2A / 32768 = 61.04 µA
   // We'll use 100 µA for easier calculation
   // Calibration = 0.00512 / (Current_LSB * Rshunt)
-  // Calibration = 0.00512 / (0.0001 * 0.01) = 5120
+  // For ADCRANGE=1, SHUNT_CAL must be divided by 4
+  // Calibration = 0.00512 / (0.0001 * 0.01) / 4 = 1280
 
   currentLSB_mA = 0.1f;  // 100 µA = 0.1 mA
-  shuntVoltageLSB_uV = 0.3125f;  // 0.3125 µV for ±20.48mV range
-  powerLSB_mW = 3.2f * currentLSB_mA;  // Power LSB = 3.2 * Current LSB
+  shuntVoltageLSB_uV = 0.625f;  // 0.625 µV (625 nV) for ±20.48mV range
+  powerLSB_mW = 32.0f * currentLSB_mA;  // Power LSB = 32 * Current LSB per datasheet
 
-  calValue = 5120;
+  calValue = 1280;
 
   // Set Calibration register
   wireWriteRegister(INA232_REG_CALIBRATION, calValue);
@@ -149,11 +182,16 @@ int16_t P152_data_struct::getShuntVoltage_raw() {
 int16_t P152_data_struct::getCurrent_raw() {
   uint16_t value;
 
-  // Sometimes a sharp load will reset the INA232, which will
-  // reset the cal register, meaning CURRENT and POWER will
-  // not be available ... avoid this by always setting a cal
-  // value even if it's an unfortunate extra step
-  wireWriteRegister(INA232_REG_CALIBRATION, calValue);
+  // Check if calibration register needs to be rewritten
+  // Only rewrite if it's been cleared (e.g., by device reset)
+  uint16_t current_cal;
+  wireReadRegister(INA232_REG_CALIBRATION, &current_cal);
+  
+  if (current_cal != calValue && calValue != 0) {
+    // Calibration was lost, restore it
+    wireWriteRegister(INA232_REG_CALIBRATION, calValue);
+    delay(1); // Give device time to process calibration
+  }
 
   // Now we can safely read the CURRENT register!
   wireReadRegister(INA232_REG_CURRENT, &value);
@@ -162,9 +200,9 @@ int16_t P152_data_struct::getCurrent_raw() {
 }
 
 uint32_t P152_data_struct::getPower_raw() {
-  uint32_t value;
-  wireReadRegister24(INA232_REG_POWER, &value);
-  return value;
+  uint16_t value;
+  wireReadRegister(INA232_REG_POWER, &value);
+  return (uint32_t)value;
 }
 
 float P152_data_struct::getShuntVoltage_mV() {
@@ -175,8 +213,8 @@ float P152_data_struct::getShuntVoltage_mV() {
 
 float P152_data_struct::getBusVoltage_V() {
   int16_t value = getBusVoltage_raw();
-  // INA232 bus voltage LSB = 1.25 mV
-  return value * 0.00125f;
+  // INA232 bus voltage LSB = 1.6 mV per datasheet
+  return value * 0.0016f;
 }
 
 float P152_data_struct::getCurrent_mA() {
@@ -191,37 +229,173 @@ float P152_data_struct::getPower_mW() {
 
 void P152_data_struct::wireWriteRegister(uint8_t reg, uint16_t value)
 {
-  I2C_write16_reg(i2caddr, reg, value);
+  bool result = I2C_write16_reg(i2caddr, reg, value);
+  
+  if (!result) {
+    errorCount++;
+    if (loglevelActiveFor(LOG_LEVEL_ERROR)) {
+      String log = F("INA232: Failed to write register 0x");
+      log += String(reg, HEX);
+      log += F(" value 0x");
+      log += String(value, HEX);
+      log += F(" to address 0x");
+      log += String(i2caddr, HEX);
+      log += F(" (Error count: ");
+      log += errorCount;
+      log += F(")");
+      addLogMove(LOG_LEVEL_ERROR, log);
+    }
+    
+    // If too many errors, try to recover
+    if (errorCount > 10) {
+      tryRecoverDevice();
+    }
+  } else {
+    // Success - reset error count
+    if (errorCount > 0) {
+      errorCount = 0;
+    }
+    lastSuccessTime = millis();
+  }
 }
 
 void P152_data_struct::wireReadRegister(uint8_t reg, uint16_t *value)
 {
-  Wire.beginTransmission(i2caddr);
-  Wire.write(reg);
-  Wire.endTransmission();
-
-  delay(1);  // Max conversion time is ~8ms with averaging
-
-  Wire.requestFrom(i2caddr, (uint8_t)2);
-
-  // Shift values to create properly formed integer
-  *value = ((Wire.read() << 8) | Wire.read());
+  bool is_ok = false;
+  *value = I2C_read16_reg(i2caddr, reg, &is_ok);
+  
+  if (!is_ok) {
+    errorCount++;
+    if (loglevelActiveFor(LOG_LEVEL_ERROR)) {
+      String log = F("INA232: Failed to read register 0x");
+      log += String(reg, HEX);
+      log += F(" from address 0x");
+      log += String(i2caddr, HEX);
+      log += F(" (Error count: ");
+      log += errorCount;
+      log += F(")");
+      addLogMove(LOG_LEVEL_ERROR, log);
+    }
+    
+    // If too many errors, try to recover
+    if (errorCount > 10) {
+      tryRecoverDevice();
+    }
+  } else {
+    // Success - reset error count
+    if (errorCount > 0) {
+      errorCount = 0;
+    }
+    lastSuccessTime = millis();
+  }
 }
 
 void P152_data_struct::wireReadRegister24(uint8_t reg, uint32_t *value)
 {
+  // INA232 power register is actually 24 bits
+  // Read using standard I2C functions
+  bool is_ok = false;
+  *value = (uint32_t)I2C_read24_reg(i2caddr, reg, &is_ok);
+  
+  if (!is_ok && loglevelActiveFor(LOG_LEVEL_ERROR)) {
+    String log = F("INA232: Failed to read 24-bit register 0x");
+    log += String(reg, HEX);
+    log += F(" from address 0x");
+    log += String(i2caddr, HEX);
+    addLogMove(LOG_LEVEL_ERROR, log);
+  }
+}
+
+void P152_data_struct::debugReadAllRegisters()
+{
+  if (loglevelActiveFor(LOG_LEVEL_DEBUG)) {
+    uint16_t config = 0, shunt = 0, bus = 0, current = 0, cal = 0, power = 0;
+    
+    wireReadRegister(INA232_REG_CONFIG, &config);
+    wireReadRegister(INA232_REG_SHUNTVOLTAGE, &shunt);
+    wireReadRegister(INA232_REG_BUSVOLTAGE, &bus);
+    wireReadRegister(INA232_REG_POWER, &power);
+    wireReadRegister(INA232_REG_CURRENT, &current);
+    wireReadRegister(INA232_REG_CALIBRATION, &cal);
+    
+    String log = F("INA232 Registers - Config: 0x");
+    log += String(config, HEX);
+    log += F(", Shunt: 0x");
+    log += String(shunt, HEX);
+    log += F(", Bus: 0x");
+    log += String(bus, HEX);
+    log += F(", Power: 0x");
+    log += String(power, HEX);
+    log += F(", Current: 0x");
+    log += String(current, HEX);
+    log += F(", Cal: 0x");
+    log += String(cal, HEX);
+    
+    addLogMove(LOG_LEVEL_DEBUG, log);
+  }
+}
+
+bool P152_data_struct::isConnected()
+{
+  // Simple I2C presence check
   Wire.beginTransmission(i2caddr);
-  Wire.write(reg);
-  Wire.endTransmission();
+  uint8_t error = Wire.endTransmission();
+  return (error == 0);
+}
 
-  delay(1);
-
-  Wire.requestFrom(i2caddr, (uint8_t)3);
-
-  // Read 24-bit value (3 bytes)
-  *value = ((uint32_t)Wire.read() << 16) |
-           ((uint32_t)Wire.read() << 8) |
-           Wire.read();
+void P152_data_struct::tryRecoverDevice()
+{
+  if (loglevelActiveFor(LOG_LEVEL_INFO)) {
+    String log = formatToHex(i2caddr, F("INA232 0x"), 2);
+    log += F(" attempting recovery after ");
+    log += errorCount;
+    log += F(" errors");
+    addLogMove(LOG_LEVEL_INFO, log);
+  }
+  
+  // Try to wake up the device
+  I2C_wakeup(i2caddr);
+  delay(10);
+  
+  // Check if device is responding
+  uint16_t mfr_id = 0;
+  bool is_ok = false;
+  mfr_id = I2C_read16_reg(i2caddr, INA232_REG_MANUFACTURER_ID, &is_ok);
+  
+  if (is_ok && mfr_id == 0x5449) {
+    // Device is responding, re-initialize
+    // Reset the device
+    I2C_write16_reg(i2caddr, INA232_REG_CONFIG, INA232_CONFIG_RESET);
+    delay(10);
+    
+    // Re-apply calibration
+    if (calValue != 0) {
+      I2C_write16_reg(i2caddr, INA232_REG_CALIBRATION, calValue);
+      
+      // Re-apply last configuration
+      uint16_t config = INA232_CONFIG_ADCRANGE_163_84MV |
+                        INA232_CONFIG_AVG_128 |
+                        INA232_CONFIG_VBUSCT_1100US |
+                        INA232_CONFIG_VSHCT_1100US |
+                        INA232_CONFIG_MODE_SHUNT_BUS_CONT;
+      I2C_write16_reg(i2caddr, INA232_REG_CONFIG, config);
+      
+      if (loglevelActiveFor(LOG_LEVEL_INFO)) {
+        String log = formatToHex(i2caddr, F("INA232 0x"), 2);
+        log += F(" recovery successful");
+        addLogMove(LOG_LEVEL_INFO, log);
+      }
+      
+      errorCount = 0;
+      lastSuccessTime = millis();
+    }
+  } else {
+    if (loglevelActiveFor(LOG_LEVEL_ERROR)) {
+      String log = formatToHex(i2caddr, F("INA232 0x"), 2);
+      log += F(" recovery failed - device not responding");
+      addLogMove(LOG_LEVEL_ERROR, log);
+    }
+  }
 }
 
 #endif // ifdef USES_P152
