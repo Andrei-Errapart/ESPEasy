@@ -349,6 +349,27 @@ void I2CBegin(int8_t sda, int8_t scl, uint32_t clockFreq) {
   Wire.begin(sda, scl);
   Wire.setClock(clockFreq);
   #endif // ifdef ESP32
+  
+  // Enable internal pull-ups on I2C pins
+  // ESP8266 internal pull-ups are weak (~30-50k) but better than nothing
+  if (sda >= 0 && scl >= 0) {
+    #ifdef ESP8266
+    pinMode(sda, INPUT_PULLUP);
+    pinMode(scl, INPUT_PULLUP);
+    
+    // Re-initialize Wire after setting pull-ups
+    Wire.begin(sda, scl);
+    Wire.setClock(clockFreq);
+    
+    if (loglevelActiveFor(LOG_LEVEL_INFO)) {
+      String log = F("I2C : Enabled internal pull-ups on SDA:");
+      log += sda;
+      log += F(" SCL:");
+      log += scl;
+      addLogMove(LOG_LEVEL_INFO, log);
+    }
+    #endif
+  }
 }
 
 #if FEATURE_I2CMULTIPLEXER
